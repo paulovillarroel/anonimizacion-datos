@@ -225,41 +225,67 @@ anonimizar <- function(
 
     if (!no_cumplen) break
 
-    # Si hay registros que no cumplen, anonimizar una variable
-    # Empezar con variable categórica (como sexo)
-    vars_categoricas <- setdiff(
-      quasi_id_vars,
-      c(vars_numericas, vars_geo, grep("_grupo$", quasi_id_vars, value = TRUE))
+    # (Ensure 'no_cumplen <- any(df$k_valor < k | df$l_valor < l)' and 
+    # 'if (!no_cumplen) break' are at the beginning of this repeat loop)
+
+    # Determine potential variables for generalization from the current quasi_id_vars list
+    candidate_qis_for_step7 <- setdiff(
+        quasi_id_vars, 
+        # Exclude already generalized products like age groups or final geo variables
+        # if they are identified by patterns and should not be re-generalized here.
+        # The original script replaces original QIs with _grupo or _final versions in quasi_id_vars.
+        # So, _grupo and _final variables themselves are typically not candidates for this step.
+        grep("_grupo$|_final$", quasi_id_vars, value = TRUE) 
     )
+    
+    var_a_anonimizar <- NULL # Initialize
+    
+    # Try to pick a categorical one first from these candidates
+    if (length(candidate_qis_for_step7) > 0) { # Only proceed if candidates exist
+        for (cand_var in candidate_qis_for_step7) {
+            if (cand_var %in% names(df) && (is.character(df[[cand_var]]) || is.factor(df[[cand_var]]))) {
+                var_a_anonimizar <- cand_var
+                break
+            }
+        }
+    }
 
-    if (length(vars_categoricas) > 0) {
-      var_a_anonimizar <- vars_categoricas[1]
+    # If no categorical found, try to pick a numeric one from these candidates
+    if (is.null(var_a_anonimizar) && length(candidate_qis_for_step7) > 0) { # Only if no categorical AND candidates exist
+        for (cand_var in candidate_qis_for_step7) {
+            if (cand_var %in% names(df) && is.numeric(df[[cand_var]])) {
+                var_a_anonimizar <- cand_var
+                break
+            }
+        }
+    }
 
-      # Identificar registros que no cumplen
-      registros_no_cumplen <- df$k_valor < k | df$l_valor < l
+    # If a variable was selected for anonymization:
+    if (!is.null(var_a_anonimizar)) {
+      # Original generalization logic:
+      registros_no_cumplen <- df$k_valor < k | df$l_valor < l # Ensure this is fresh
 
-      # Anonimizar la variable
-      if (
-        is.character(df[[var_a_anonimizar]]) ||
-          is.factor(df[[var_a_anonimizar]])
-      ) {
+      if (is.character(df[[var_a_anonimizar]]) || is.factor(df[[var_a_anonimizar]])) {
         df[[var_a_anonimizar]] <- ifelse(
-          registros_no_cumplen,
+          registros_no_cumplen & !is.na(df[[var_a_anonimizar]]), 
           "***",
           as.character(df[[var_a_anonimizar]])
         )
-      } else if (is.numeric(df[[var_a_anonimizar]])) {
+      } else if (is.numeric(df[[var_a_anonimizar]])) { # This block is now reachable
         df[[var_a_anonimizar]] <- ifelse(
-          registros_no_cumplen,
+          registros_no_cumplen & !is.na(df[[var_a_anonimizar]]), 
           NA_real_,
           df[[var_a_anonimizar]]
         )
       }
 
-      # Actualizar resumen
-      vars_anonimizadas <- c(vars_anonimizadas, var_a_anonimizar)
-
-      # Recalcular k y l
+      # Actualizar resumen:
+      # Ensure 'vars_anonimizadas' is initialized as character(0) before the loop.
+      if (!var_a_anonimizar %in% vars_anonimizadas) { 
+          vars_anonimizadas <- c(vars_anonimizadas, var_a_anonimizar)
+      }
+      
+      # Recalcular k y l (using the main quasi_id_vars list, which includes the now-modified var_a_anonimizar)
       df <- df |>
         group_by(across(all_of(quasi_id_vars))) |>
         mutate(
@@ -268,11 +294,13 @@ anonimizar <- function(
         ) |>
         ungroup()
 
-      # Eliminar la variable anonimizada de la lista para no volver a procesarla
+      # Remove the generalized variable from quasi_id_vars so it's not picked again for generalization.
       quasi_id_vars <- setdiff(quasi_id_vars, var_a_anonimizar)
     } else {
-      # Si no hay más variables para anonimizar, romper el ciclo
-      break
+      # No suitable variable (categorical or numeric) found in candidate_qis_for_step7 for further generalization.
+      # This means candidate_qis_for_step7 was empty, or contained types not handled by the logic above.
+      # This is the point to break if no further generalization in this loop is possible.
+      break 
     }
   }
 
