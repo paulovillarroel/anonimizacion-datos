@@ -141,7 +141,9 @@ El K de cada nivel geográfico se cuenta sobre **todos** los registros que compa
 
 `K_nivel2` es 20 (los 16 más los 4), así que 13102 "cumple" y baja a `131**`. Pero los 16 de 13101 se quedaron en nivel 1, de modo que el grupo real de `131**` tiene K=4, por debajo de k.
 
-Es un comportamiento heredado del procedimiento de la norma. La **verificación final** lo detecta y avisa: si aparece el `warning`, revisa la salida antes de publicar. Con k=2 o k=3 —los valores de la norma— es poco frecuente; se vuelve visible con k altos.
+Es un comportamiento heredado del procedimiento de la norma. La implementación **se ciñe a la norma** y no lo corrige por su cuenta. La **verificación final** lo detecta y avisa: si aparece el `warning`, revisa la salida antes de publicar. Con k=2 o k=3 —los valores de la norma— es poco frecuente; se vuelve visible con k altos.
+
+El ajuste que resolvería esto está documentado en [docs/propuesta-ajuste-norma-241.md](docs/propuesta-ajuste-norma-241.md), como propuesta para el equipo que redactó la norma, junto con el script [docs/verificacion_propuesta.R](docs/verificacion_propuesta.R) que reproduce las mediciones.
 
 ## Resultado
 
