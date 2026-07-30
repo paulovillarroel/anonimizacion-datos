@@ -120,9 +120,28 @@ Esto es pseudonimización, no anonimización: con el salt en mano el mapeo se pu
 1. **Eliminación de identificadores directos**: remueve las variables de `id_vars` (RUT, nombre, dirección, etc.).
 2. **Pseudonimización**: reemplaza las variables de `pseudo_id_vars` por un hash md5 con salt.
 3. **Agrupación de variables de edad**: toda cuasi-identificadora numérica cuyo nombre contenga "edad" se convierte en tramos según `edad_rangos`.
-4. **Anonimización de códigos geográficos**: para cada variable de `geo_vars`, aplica el nivel menos restrictivo que cumpla k y l.
-5. **Supresión progresiva**: mientras queden registros que no cumplan k o l, suprime una cuasi-identificadora a la vez (`"***"` si es texto, `NA` si es numérica), recalculando k y l tras cada paso. No toca las de `geo_vars` ni el tramo etario. Si se acaban las variables disponibles y aún quedan registros incumpliendo, emite un `warning`.
+4. **Degradación progresiva**, en el orden que fija la norma:
+   1. Para cada variable de `geo_vars`, se aplica el nivel menos restrictivo que cumpla k y l.
+   2. Si quedan registros sin resolver, se suprime la primera cuasi-identificadora común (`"***"` si es texto, `NA` si es numérica) **solo en esos registros**, y se recalculan los niveles geográficos desde cero: colapsar una categoría agranda los grupos y puede devolver la geografía a un nivel menos anonimizado.
+   3. Se repite con las siguientes cuasi-identificadoras, dejando el **tramo etario para el final**.
+   4. Solo cuando ya no quedan variables por sacrificar, los códigos territoriales que siguen sin resolverse pasan a máxima anonimización (`*****`).
+
+   El orden importa: la norma sacrifica sexo y tramo etario **antes** que la geografía completa, de modo que el territorio se preserva todo lo posible.
+5. **Verificación final**: se recalculan k y l sobre el conjunto completo de cuasi-identificadoras. Si quedan registros incumpliendo, emite un `warning`.
 6. **Limpieza** de las columnas de trabajo.
+
+### Limitación conocida
+
+El K de cada nivel geográfico se cuenta sobre **todos** los registros que comparten ese nivel, pero después solo algunos terminan usándolo, así que el grupo publicado puede ser más chico que el contado. Ejemplo con k=10:
+
+| Comuna | K en nivel 1 | Nivel elegido |
+|---|---|---|
+| 13101 | 16 | nivel 1 → `13101` |
+| 13102 | 4 | nivel 2 → `131**` |
+
+`K_nivel2` es 20 (los 16 más los 4), así que 13102 "cumple" y baja a `131**`. Pero los 16 de 13101 se quedaron en nivel 1, de modo que el grupo real de `131**` tiene K=4, por debajo de k.
+
+Es un comportamiento heredado del procedimiento de la norma. La **verificación final** lo detecta y avisa: si aparece el `warning`, revisa la salida antes de publicar. Con k=2 o k=3 —los valores de la norma— es poco frecuente; se vuelve visible con k altos.
 
 ## Resultado
 

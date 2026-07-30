@@ -175,246 +175,180 @@ anonimizar <- function(
   geo_vars <- if (is.null(geo_vars)) character(0) else geo_vars
   qid_evaluacion <- unique(c(quasi_id_vars, geo_vars))
 
-  # --- Helper Function for Geographic Anonymization ---
-  # Esta función encapsula la lógica para anonimizar una variable geográfica específica.
-  anonimizar_variable_geo <- function(
-    df_in,
-    var_geo,
-    qid_vars,
-    sens_var,
-    k_val,
-    l_val
-  ) {
-    # Copia local para evitar modificar el df original directamente en la función helper
-    df_local <- df_in
+  # --- Anonimización geográfica y supresión progresiva ------------------------
+  # Sigue el orden de la norma técnica: la geografía se degrada por niveles,
+  # y si eso no basta se sacrifican primero las otras cuasi-identificadoras
+  # (sexo, previsión, ...), después el tramo etario, y solo al final se enmascara
+  # el código territorial por completo.
+  #
+  # Cada supresión obliga a recalcular los niveles desde cero, porque colapsar
+  # una categoría cambia el tamaño de los grupos y puede devolver la geografía
+  # a un nivel menos anonimizado. Por eso se conserva el código original aparte.
 
-    # Convertir a carácter si es necesario
-    df_local[[var_geo]] <- as.character(df_local[[var_geo]])
+  for (v in geo_vars) {
+    df[[paste0(v, "_orig")]] <- as.character(df[[v]])
+    df[[v]] <- df[[paste0(v, "_orig")]]
+  }
 
-    # Determinar longitud del código para valores no NA
-    chars_no_na <- nchar(df_local[[var_geo]][!is.na(df_local[[var_geo]])])
-    if (length(chars_no_na) == 0) {
-      # Si todos son NA o la variable no existe, devolver sin cambios
-      return(list(df = df_local, resumen_geo = NULL))
-    }
+  # Orden de sacrificio: cuasi-identificadoras comunes primero, tramo etario
+  # después. La geografía no entra: tiene su propia escalera de niveles.
+  candidatas <- c(
+    setdiff(quasi_id_vars, c(geo_vars, vars_edad_agrupadas)),
+    vars_edad_agrupadas
+  )
 
-    # Crear los tres niveles de anonimización
-    df_local <- df_local |>
+  # Calcula los tres niveles de una variable geográfica y marca, por registro,
+  # el menos anonimizado que cumple k y l. Devuelve el df con las columnas
+  # <var>_nivel1/2/3, K_*, L_*, <var>_final y <var>_cumple.
+  calcular_niveles_geo <- function(df_in, var_geo) {
+    orig <- paste0(var_geo, "_orig")
+
+    df_in <- df_in |>
       mutate(
-        !!paste0(var_geo, "_nivel1") := .data[[var_geo]],
+        !!paste0(var_geo, "_nivel1") := .data[[orig]],
         !!paste0(var_geo, "_nivel2") := case_when(
-          is.na(.data[[var_geo]]) ~ NA_character_,
-          nchar(.data[[var_geo]]) >= 3 ~
+          is.na(.data[[orig]]) ~ NA_character_,
+          nchar(.data[[orig]]) >= 3 ~
             paste0(
-              str_sub(.data[[var_geo]], 1, 3),
-              str_dup("*", nchar(.data[[var_geo]]) - 3)
+              str_sub(.data[[orig]], 1, 3),
+              str_dup("*", nchar(.data[[orig]]) - 3)
             ),
-          TRUE ~ .data[[var_geo]]
+          TRUE ~ .data[[orig]]
         ),
         !!paste0(var_geo, "_nivel3") := case_when(
-          is.na(.data[[var_geo]]) ~ NA_character_,
-          nchar(.data[[var_geo]]) >= 2 ~
+          is.na(.data[[orig]]) ~ NA_character_,
+          nchar(.data[[orig]]) >= 2 ~
             paste0(
-              str_sub(.data[[var_geo]], 1, 2),
-              str_dup("*", nchar(.data[[var_geo]]) - 2)
+              str_sub(.data[[orig]], 1, 2),
+              str_dup("*", nchar(.data[[orig]]) - 2)
             ),
-          TRUE ~ .data[[var_geo]]
+          TRUE ~ .data[[orig]]
         )
       )
 
-    # Calcular K y L para cada nivel, agrupando por el resto de los
-    # cuasi-identificadores (incluidas las otras geográficas ya procesadas)
-    quasi_ids_sin_geo_local <- setdiff(qid_vars, var_geo)
-    df_local <- df_local |>
-      group_by(across(all_of(c(
-        quasi_ids_sin_geo_local,
-        paste0(var_geo, "_nivel1")
-      )))) |>
-      mutate(
-        !!paste0("K_", var_geo, "_nivel1") := n(),
-        !!paste0("L_", var_geo, "_nivel1") := n_distinct(.data[[sens_var]])
-      ) |>
-      ungroup() |>
-      group_by(across(all_of(c(
-        quasi_ids_sin_geo_local,
-        paste0(var_geo, "_nivel2")
-      )))) |>
-      mutate(
-        !!paste0("K_", var_geo, "_nivel2") := n(),
-        !!paste0("L_", var_geo, "_nivel2") := n_distinct(.data[[sens_var]])
-      ) |>
-      ungroup() |>
-      group_by(across(all_of(c(
-        quasi_ids_sin_geo_local,
-        paste0(var_geo, "_nivel3")
-      )))) |>
-      mutate(
-        !!paste0("K_", var_geo, "_nivel3") := n(),
-        !!paste0("L_", var_geo, "_nivel3") := n_distinct(.data[[sens_var]])
-      ) |>
-      ungroup()
+    # Agrupar por el resto de los cuasi-identificadores (incluidas las otras
+    # geográficas, que ya llevan su valor vigente) más el nivel evaluado
+    resto <- setdiff(qid_evaluacion, var_geo)
+    for (nivel in c("nivel1", "nivel2", "nivel3")) {
+      nivel_var <- paste0(var_geo, "_", nivel)
+      df_in <- df_in |>
+        group_by(across(all_of(c(resto, nivel_var)))) |>
+        mutate(
+          !!paste0("K_", nivel_var) := n(),
+          !!paste0("L_", nivel_var) := n_distinct(.data[[sensitive_var]])
+        ) |>
+        ungroup()
+    }
 
-    # Condiciones de cumplimiento por nivel
-    cumple1 <- df_local[[paste0("K_", var_geo, "_nivel1")]] >= k_val &
-      df_local[[paste0("L_", var_geo, "_nivel1")]] >= l_val
-    cumple2 <- df_local[[paste0("K_", var_geo, "_nivel2")]] >= k_val &
-      df_local[[paste0("L_", var_geo, "_nivel2")]] >= l_val
-    cumple3 <- df_local[[paste0("K_", var_geo, "_nivel3")]] >= k_val &
-      df_local[[paste0("L_", var_geo, "_nivel3")]] >= l_val
+    cumple1 <- df_in[[paste0("K_", var_geo, "_nivel1")]] >= k &
+      df_in[[paste0("L_", var_geo, "_nivel1")]] >= l
+    cumple2 <- df_in[[paste0("K_", var_geo, "_nivel2")]] >= k &
+      df_in[[paste0("L_", var_geo, "_nivel2")]] >= l
+    cumple3 <- df_in[[paste0("K_", var_geo, "_nivel3")]] >= k &
+      df_in[[paste0("L_", var_geo, "_nivel3")]] >= l
 
-    # Crear la variable final (_final) con el menor nivel que cumpla k y l
-    df_local[[paste0(var_geo, "_final")]] <- case_when(
-      cumple1 ~ df_local[[paste0(var_geo, "_nivel1")]],
-      cumple2 ~ df_local[[paste0(var_geo, "_nivel2")]],
-      cumple3 ~ df_local[[paste0(var_geo, "_nivel3")]],
-      !is.na(df_local[[var_geo]]) ~ str_dup("*", nchar(df_local[[var_geo]])),
+    df_in[[paste0(var_geo, "_final")]] <- case_when(
+      cumple1 ~ df_in[[paste0(var_geo, "_nivel1")]],
+      cumple2 ~ df_in[[paste0(var_geo, "_nivel2")]],
+      cumple3 ~ df_in[[paste0(var_geo, "_nivel3")]],
       TRUE ~ NA_character_
     )
+    df_in[[paste0(var_geo, "_cumple")]] <- cumple1 | cumple2 | cumple3
 
-    # Contar registros por nivel para el resumen.
-    # Se cuenta por prioridad excluyente sobre las condiciones K/L, no
-    # comparando strings: dos niveles pueden coincidir (por ejemplo, en códigos
-    # de 3 dígitos el nivel 2 no enmascara nada) y el registro se contaría dos
-    # veces, dejando max_anon negativo.
-    nivel1_count <- sum(cumple1, na.rm = TRUE)
-    nivel2_count <- sum(!cumple1 & cumple2, na.rm = TRUE)
-    nivel3_count <- sum(!cumple1 & !cumple2 & cumple3, na.rm = TRUE)
-    max_anon_count <- nrow(df_local) -
-      nivel1_count -
-      nivel2_count -
-      nivel3_count
+    # Valor vigente para las pasadas siguientes y para agrupar las otras geo
+    df_in[[var_geo]] <- df_in[[paste0(var_geo, "_final")]]
 
-    resumen_geo_local <- list(
-      var = var_geo,
-      niveles = c(
-        nivel1 = nivel1_count,
-        nivel2 = nivel2_count,
-        nivel3 = nivel3_count,
-        max_anon = max_anon_count
-      )
-    )
-
-    # Reemplazar la variable original con la final en el df local
-    df_local[[var_geo]] <- df_local[[paste0(var_geo, "_final")]]
-
-    # Devolver el df modificado y el resumen para esta variable
-    return(list(df = df_local, resumen_geo = resumen_geo_local))
-  }
-  # --- Fin Helper Function ---
-
-  # 4. Procesar variables geográficas (si se especificaron) usando la función helper
-  resumen$vars_geo_anonimizadas <- character(0) # Inicializar en resumen
-  if (length(geo_vars) > 0) {
-    for (var_g in geo_vars) {
-      resultado_geo <- anonimizar_variable_geo(
-        df_in = df,
-        var_geo = var_g, # Usar la variable de geo_vars
-        qid_vars = qid_evaluacion, # Todos los cuasi-identificadores
-        sens_var = sensitive_var,
-        k_val = k,
-        l_val = l
-      )
-
-      # Actualizar el dataframe principal
-      df <- resultado_geo$df
-
-      # Actualizar el resumen general si hubo cambios
-      if (!is.null(resultado_geo$resumen_geo)) {
-        resumen$vars_geo_anonimizadas <- c(
-          resumen$vars_geo_anonimizadas,
-          resultado_geo$resumen_geo$var
-        )
-        resumen$nivel_anonimizacion[[
-          resultado_geo$resumen_geo$var
-        ]] <- resultado_geo$resumen_geo$niveles
-      }
-
-      # Nota: La variable geográfica (var_g) se modifica *en el dataframe df*
-      # dentro de anonimizar_variable_geo, conservando su nombre. Las
-      # operaciones posteriores operan sobre la columna ya modificada.
-    }
+    attr(df_in, "cumples") <- list(c1 = cumple1, c2 = cumple2, c3 = cumple3)
+    df_in
   }
 
-  # 5. Calcular k y l iniciales sobre todos los cuasi-identificadores
-  # (incluyendo edad agrupada y geo anonimizada)
-  df <- df |>
-    group_by(across(all_of(qid_evaluacion))) |>
-    mutate(
-      k_valor = n(),
-      l_valor = n_distinct(.data[[sensitive_var]])
-    ) |>
-    ungroup()
-
-  # 7. Supresión iterativa para cumplir k-anonimidad y l-diversidad
-  # Si después de las transformaciones iniciales (edad, geo), aún hay grupos
-  # que no cumplen con k o l, se entra en un ciclo para suprimir valores
-  # en otras variables cuasi-identificadoras hasta que se cumplan los criterios
-  # o no queden más variables por suprimir.
-  vars_anonimizadas <- character(0)
-  candidatas <- setdiff(quasi_id_vars, c(geo_vars, vars_edad_agrupadas))
-
-  repeat {
-    # Verificar si todavía hay registros/grupos que no cumplen k o l
-    no_cumplen <- any(df$k_valor < k | df$l_valor < l)
-
-    if (!no_cumplen) {
-      # Si todos los grupos cumplen, salir del ciclo
-      break
-    }
-
-    if (length(candidatas) == 0) {
-      # Si no quedan más variables para suprimir y aún no se cumplen los
-      # criterios k/l, se detiene el proceso de supresión.
-      warning(
-        "No quedan variables para suprimir y aún hay grupos que no cumplen ",
-        "k = ", k, " o l = ", l, ". Revisar el resultado antes de publicar."
-      )
-      break
-    }
-
-    var_a_anonimizar <- candidatas[1]
-
-    # Identificar registros que no cumplen
-    registros_no_cumplen <- df$k_valor < k | df$l_valor < l
-
-    # Anonimizar la variable
-    if (is.numeric(df[[var_a_anonimizar]])) {
-      df[[var_a_anonimizar]] <- ifelse(
-        registros_no_cumplen,
-        NA_real_,
-        df[[var_a_anonimizar]]
-      )
-    } else {
-      df[[var_a_anonimizar]] <- ifelse(
-        registros_no_cumplen,
-        "***",
-        as.character(df[[var_a_anonimizar]])
-      )
-    }
-
-    # Actualizar resumen
-    vars_anonimizadas <- c(vars_anonimizadas, var_a_anonimizar)
-
-    # Recalcular k y l siempre sobre el mismo conjunto de cuasi-identificadores
-    # (ya transformados). Suprimir un valor colapsa categorías, así que el
-    # recuento cambia aunque el conjunto de columnas sea fijo.
-    df <- df |>
+  calcular_kl_global <- function(df_in) {
+    df_in |>
       group_by(across(all_of(qid_evaluacion))) |>
       mutate(
         k_valor = n(),
         l_valor = n_distinct(.data[[sensitive_var]])
       ) |>
       ungroup()
-
-    # No volver a elegir esta variable en la siguiente iteración
-    candidatas <- setdiff(candidatas, var_a_anonimizar)
   }
 
-  # Actualizar resumen con variables categóricas anonimizadas
+  vars_anonimizadas <- character(0)
+  cumples_finales <- list()
+
+  repeat {
+    if (length(geo_vars) > 0) {
+      falla <- rep(FALSE, nrow(df))
+      for (v in geo_vars) {
+        df <- calcular_niveles_geo(df, v)
+        cumples_finales[[v]] <- attr(df, "cumples")
+        falla <- falla | !df[[paste0(v, "_cumple")]]
+      }
+    } else {
+      df <- calcular_kl_global(df)
+      falla <- df$k_valor < k | df$l_valor < l
+    }
+
+    if (!any(falla)) break
+    if (length(candidatas) == 0) break
+
+    var_a_suprimir <- candidatas[1]
+    if (is.numeric(df[[var_a_suprimir]])) {
+      df[[var_a_suprimir]] <- ifelse(falla, NA_real_, df[[var_a_suprimir]])
+    } else {
+      df[[var_a_suprimir]] <- ifelse(
+        falla,
+        "***",
+        as.character(df[[var_a_suprimir]])
+      )
+    }
+    vars_anonimizadas <- c(vars_anonimizadas, var_a_suprimir)
+    candidatas <- candidatas[-1]
+  }
+
+  # Máxima anonimización: lo que no se resolvió con las supresiones anteriores
+  for (v in geo_vars) {
+    orig <- df[[paste0(v, "_orig")]]
+    final <- df[[paste0(v, "_final")]]
+    df[[v]] <- if_else(
+      is.na(final) & !is.na(orig),
+      str_dup("*", nchar(orig)),
+      final
+    )
+
+    cc <- cumples_finales[[v]]
+    nivel1_count <- sum(cc$c1, na.rm = TRUE)
+    nivel2_count <- sum(!cc$c1 & cc$c2, na.rm = TRUE)
+    nivel3_count <- sum(!cc$c1 & !cc$c2 & cc$c3, na.rm = TRUE)
+
+    resumen$vars_geo_anonimizadas <- c(resumen$vars_geo_anonimizadas, v)
+    resumen$nivel_anonimizacion[[v]] <- c(
+      nivel1 = nivel1_count,
+      nivel2 = nivel2_count,
+      nivel3 = nivel3_count,
+      max_anon = nrow(df) - nivel1_count - nivel2_count - nivel3_count
+    )
+  }
+
   if (length(vars_anonimizadas) > 0) {
     resumen$otras_vars_anonimizadas <- vars_anonimizadas
   }
 
+  # Verificación final sobre el conjunto completo de cuasi-identificadores
+  df <- calcular_kl_global(df)
+  incumplen <- sum(df$k_valor < k | df$l_valor < l)
+  if (incumplen > 0) {
+    warning(
+      "Quedan ", incumplen, " registros que no cumplen k = ", k, " o l = ", l,
+      " tras agotar las variables disponibles. Revisar antes de publicar."
+    )
+  }
+
+  # Soltar las copias del código territorial original
+  cols_orig <- paste0(geo_vars, "_orig")
+  cols_orig <- intersect(cols_orig, names(df))
+  if (length(cols_orig) > 0) {
+    df <- df |> select(-all_of(cols_orig))
+  }
   # 8. Limpiar variables temporales si se solicita
   if (eliminar_temporales) {
     # Eliminar variables temporales creadas en el proceso
@@ -423,6 +357,7 @@ anonimizar <- function(
       "^K_.*_nivel\\d+$",
       "^L_.*_nivel\\d+$",
       "_final$",
+      "_cumple$",
       "^k_valor$",
       "^l_valor$"
     )

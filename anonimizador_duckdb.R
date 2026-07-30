@@ -274,189 +274,235 @@ anonimizar_duckdb <- function(
   # que efectivamente se publica.
   qid_evaluacion <- unique(c(quasi_id_vars, geo_vars))
 
-  # --- 4-5. Anonimización geográfica por niveles progresivos -----------------
+  # --- 4-7. Anonimización geográfica y supresión progresiva ------------------
+  # Sigue el orden de la norma técnica: la geografía se degrada por niveles,
+  # y si eso no basta se sacrifican primero las otras cuasi-identificadoras
+  # (sexo, previsión, ...), después el tramo etario, y solo al final se enmascara
+  # el código territorial por completo.
+  #
+  # Cada supresión obliga a recalcular los niveles desde cero, porque colapsar
+  # una categoría cambia el tamaño de los grupos y puede devolver la geografía
+  # a un nivel menos anonimizado. Por eso se conserva el código original aparte.
 
-  for (v in geo_vars) {
-    q <- qi(v)
+  if (length(geo_vars) > 0) {
+    extras <- sapply(geo_vars, function(v) {
+      paste0("CAST(", qi(v), " AS VARCHAR) AS ", qi(paste0(v, "_orig")))
+    })
+    replaces <- sapply(geo_vars, function(v) {
+      paste0("CAST(", qi(v), " AS VARCHAR) AS ", qi(v))
+    })
+    rebuild(paste0(
+      "SELECT * REPLACE (", paste(replaces, collapse = ", "), "), ",
+      paste(extras, collapse = ", "), " FROM datos"
+    ))
+  }
+
+  # Orden de sacrificio: cuasi-identificadoras comunes primero, tramo etario
+  # después. La geografía no entra: tiene su propia escalera de niveles.
+  candidatas <- c(
+    setdiff(quasi_id_vars, c(geo_vars, vars_edad_agrupadas)),
+    vars_edad_agrupadas
+  )
+
+  # Calcula los tres niveles de una variable geográfica desde <var>_orig y deja
+  # <var>_final con el menos anonimizado que cumple k y l, más <var>_cumple.
+  calcular_niveles_geo <- function(v) {
+    orig <- qi(paste0(v, "_orig"))
     n1 <- qi(paste0(v, "_nivel1"))
     n2 <- qi(paste0(v, "_nivel2"))
     n3 <- qi(paste0(v, "_nivel3"))
 
-    # Nivel 1: código completo. Nivel 2: 3 primeros dígitos.
-    # Nivel 3: 2 primeros dígitos.
     nivel_expr <- function(n) {
       paste0(
-        "CASE WHEN ", q, " IS NULL THEN NULL ",
-        "     WHEN LENGTH(CAST(", q, " AS VARCHAR)) >= ", n, " ",
-        "     THEN SUBSTR(CAST(", q, " AS VARCHAR), 1, ", n, ") || ",
-        "          REPEAT('*', LENGTH(CAST(", q, " AS VARCHAR)) - ", n, ") ",
-        "     ELSE CAST(", q, " AS VARCHAR) END"
+        "CASE WHEN ", orig, " IS NULL THEN NULL ",
+        "     WHEN LENGTH(", orig, ") >= ", n, " ",
+        "     THEN SUBSTR(", orig, ", 1, ", n, ") || ",
+        "          REPEAT('*', LENGTH(", orig, ") - ", n, ") ",
+        "     ELSE ", orig, " END"
       )
     }
 
+    # Soltar los restos de la pasada anterior antes de recalcular
+    previas <- intersect(
+      c(
+        paste0(v, c("_nivel1", "_nivel2", "_nivel3", "_final", "_cumple")),
+        paste0("K_", v, c("_nivel1", "_nivel2", "_nivel3")),
+        paste0("L_", v, c("_nivel1", "_nivel2", "_nivel3"))
+      ),
+      get_cols()
+    )
+    keep <- setdiff(get_cols(), previas)
+
     rebuild(paste0(
-      "SELECT * REPLACE (CAST(", q, " AS VARCHAR) AS ", q, "), ",
-      "CAST(", q, " AS VARCHAR) AS ", n1, ", ",
+      "SELECT ", paste(qi(keep), collapse = ", "), ", ",
+      orig, " AS ", n1, ", ",
       nivel_expr(3), " AS ", n2, ", ",
       nivel_expr(2), " AS ", n3,
       " FROM datos"
     ))
 
-    # Calcular K y L para cada nivel, agrupando por el resto de los
-    # cuasi-identificadores (incluidas las otras geográficas ya procesadas)
+    resto <- setdiff(qid_evaluacion, v)
     for (nivel in c("nivel1", "nivel2", "nivel3")) {
       nivel_var <- paste0(v, "_", nivel)
       calcular_kl(
-        c(setdiff(qid_evaluacion, v), nivel_var),
+        c(resto, nivel_var),
         sensitive_var,
         paste0("K_", nivel_var),
         paste0("L_", nivel_var)
       )
     }
 
-    k1 <- qi(paste0("K_", v, "_nivel1"))
-    l1 <- qi(paste0("L_", v, "_nivel1"))
-    k2 <- qi(paste0("K_", v, "_nivel2"))
-    l2 <- qi(paste0("L_", v, "_nivel2"))
-    k3 <- qi(paste0("K_", v, "_nivel3"))
-    l3 <- qi(paste0("L_", v, "_nivel3"))
+    cumple <- function(nivel) {
+      paste0(
+        qi(paste0("K_", v, "_", nivel)), " >= ", k, " AND ",
+        qi(paste0("L_", v, "_", nivel)), " >= ", l
+      )
+    }
+    c1 <- cumple("nivel1")
+    c2 <- cumple("nivel2")
+    c3 <- cumple("nivel3")
 
-    cumple1 <- paste0(k1, " >= ", k, " AND ", l1, " >= ", l)
-    cumple2 <- paste0(k2, " >= ", k, " AND ", l2, " >= ", l)
-    cumple3 <- paste0(k3, " >= ", k, " AND ", l3, " >= ", l)
-
-    # Nivel óptimo: el menos anonimizado que cumpla k y l
     final_expr <- paste0(
-      "CASE ",
-      "WHEN ", cumple1, " THEN ", n1, " ",
-      "WHEN ", cumple2, " THEN ", n2, " ",
-      "WHEN ", cumple3, " THEN ", n3, " ",
-      "WHEN ", q, " IS NOT NULL THEN REPEAT('*', LENGTH(", q, ")) ",
-      "ELSE NULL END"
+      "CASE WHEN ", c1, " THEN ", n1,
+      " WHEN ", c2, " THEN ", n2,
+      " WHEN ", c3, " THEN ", n3,
+      " ELSE NULL END"
     )
 
-    # Conteo por nivel: excluyente y por prioridad
+    # <var> toma el valor vigente, para agrupar las otras geográficas
+    otras <- setdiff(get_cols(), v)
+    rebuild(paste0(
+      "SELECT ", paste(qi(otras), collapse = ", "), ", ",
+      final_expr, " AS ", qi(paste0(v, "_final")), ", ",
+      "(", c1, ") OR (", c2, ") OR (", c3, ") AS ", qi(paste0(v, "_cumple")), ", ",
+      final_expr, " AS ", qi(v),
+      " FROM datos"
+    ))
+
+    list(c1 = c1, c2 = c2, c3 = c3)
+  }
+
+  vars_anonimizadas <- character(0)
+  cumples_finales <- list()
+
+  repeat {
+    if (length(geo_vars) > 0) {
+      for (v in geo_vars) {
+        cumples_finales[[v]] <- calcular_niveles_geo(v)
+      }
+      falla_expr <- paste(
+        sapply(geo_vars, function(v) paste0("NOT ", qi(paste0(v, "_cumple")))),
+        collapse = " OR "
+      )
+    } else {
+      calcular_kl(qid_evaluacion, sensitive_var, "k_valor", "l_valor")
+      falla_expr <- paste0("k_valor < ", k, " OR l_valor < ", l)
+    }
+
+    n_falla <- dbGetQuery(
+      con,
+      paste0("SELECT COUNT(*) AS n FROM datos WHERE ", falla_expr)
+    )$n
+
+    if (n_falla == 0) break
+    if (length(candidatas) == 0) break
+
+    var_a_suprimir <- candidatas[1]
+    tipo <- get_tipo(var_a_suprimir)
+
+    sup_expr <- if (grepl("VARCHAR|TEXT|CHAR", tipo, ignore.case = TRUE)) {
+      paste0(
+        "CASE WHEN ", falla_expr, " THEN '***' ELSE ",
+        qi(var_a_suprimir), " END AS ", qi(var_a_suprimir)
+      )
+    } else {
+      paste0(
+        "CASE WHEN ", falla_expr, " THEN NULL ELSE ",
+        qi(var_a_suprimir), " END AS ", qi(var_a_suprimir)
+      )
+    }
+
+    otras <- setdiff(get_cols(), var_a_suprimir)
+    rebuild(paste0(
+      "SELECT ", paste(qi(otras), collapse = ", "), ", ", sup_expr, " FROM datos"
+    ))
+
+    vars_anonimizadas <- c(vars_anonimizadas, var_a_suprimir)
+    candidatas <- candidatas[-1]
+  }
+
+  # Máxima anonimización: lo que no se resolvió con las supresiones anteriores
+  for (v in geo_vars) {
+    orig <- qi(paste0(v, "_orig"))
+    fin <- qi(paste0(v, "_final"))
+    otras <- setdiff(get_cols(), v)
+    rebuild(paste0(
+      "SELECT ", paste(qi(otras), collapse = ", "), ", ",
+      "CASE WHEN ", fin, " IS NOT NULL THEN ", fin,
+      " WHEN ", orig, " IS NOT NULL THEN REPEAT('*', LENGTH(", orig, ")) ",
+      "ELSE NULL END AS ", qi(v),
+      " FROM datos"
+    ))
+
+    cc <- cumples_finales[[v]]
     nivel_counts <- dbGetQuery(
       con,
       paste0(
         "SELECT ",
-        "SUM(CASE WHEN ", cumple1, " THEN 1 ELSE 0 END) AS nivel1, ",
-        "SUM(CASE WHEN NOT(", cumple1, ") AND ", cumple2,
+        "SUM(CASE WHEN ", cc$c1, " THEN 1 ELSE 0 END) AS nivel1, ",
+        "SUM(CASE WHEN NOT(", cc$c1, ") AND ", cc$c2,
         " THEN 1 ELSE 0 END) AS nivel2, ",
-        "SUM(CASE WHEN NOT(", cumple1, ") AND NOT(", cumple2, ") AND ", cumple3,
+        "SUM(CASE WHEN NOT(", cc$c1, ") AND NOT(", cc$c2, ") AND ", cc$c3,
         " THEN 1 ELSE 0 END) AS nivel3 ",
         "FROM datos"
       )
     )
-    max_anon <- n_registros -
-      nivel_counts$nivel1 -
-      nivel_counts$nivel2 -
-      nivel_counts$nivel3
 
     resumen$vars_geo_anonimizadas <- c(resumen$vars_geo_anonimizadas, v)
     resumen$nivel_anonimizacion[[v]] <- c(
       nivel1 = nivel_counts$nivel1,
       nivel2 = nivel_counts$nivel2,
       nivel3 = nivel_counts$nivel3,
-      max_anon = max_anon
+      max_anon = n_registros - nivel_counts$nivel1 - nivel_counts$nivel2 -
+        nivel_counts$nivel3
     )
-
-    # Reemplazar la columna original con el nivel óptimo y soltar temporales
-    cols_temp_geo <- c(
-      paste0(v, "_nivel1"), paste0(v, "_nivel2"), paste0(v, "_nivel3"),
-      paste0("K_", v, "_nivel1"), paste0("L_", v, "_nivel1"),
-      paste0("K_", v, "_nivel2"), paste0("L_", v, "_nivel2"),
-      paste0("K_", v, "_nivel3"), paste0("L_", v, "_nivel3")
-    )
-    keep_cols <- if (eliminar_temporales) {
-      setdiff(get_cols(), c(cols_temp_geo, v))
-    } else {
-      setdiff(get_cols(), v)
-    }
-
-    # Con eliminar_temporales = FALSE se conserva también <var>_final, para
-    # poder inspeccionar el nivel elegido junto a los K/L que lo justifican.
-    extra_final <- if (eliminar_temporales) {
-      ""
-    } else {
-      paste0(", ", final_expr, " AS ", qi(paste0(v, "_final")))
-    }
-
-    rebuild(paste0(
-      "SELECT ", paste(qi(keep_cols), collapse = ", "), ", ",
-      final_expr, " AS ", q, extra_final, " FROM datos"
-    ))
-  }
-
-  # --- 6. Calcular K y L sobre todos los cuasi-identificadores ---------------
-
-  calcular_kl(qid_evaluacion, sensitive_var, "k_valor", "l_valor")
-
-  # --- 7. Supresión iterativa -------------------------------------------------
-
-  vars_anonimizadas <- character(0)
-  candidatas <- setdiff(quasi_id_vars, c(geo_vars, vars_edad_agrupadas))
-
-  repeat {
-    hay_no_cumplen <- dbGetQuery(
-      con,
-      paste0(
-        "SELECT COUNT(*) AS n FROM datos WHERE k_valor < ", k,
-        " OR l_valor < ", l
-      )
-    )$n
-
-    if (hay_no_cumplen == 0) break
-
-    if (length(candidatas) == 0) {
-      warning(
-        "No quedan variables para suprimir y aún hay ", hay_no_cumplen,
-        " registros que no cumplen k = ", k, " o l = ", l,
-        ". Revisar el resultado antes de publicar."
-      )
-      break
-    }
-
-    var_a_anon <- candidatas[1]
-    tipo <- get_tipo(var_a_anon)
-
-    if (grepl("VARCHAR|TEXT|CHAR", tipo, ignore.case = TRUE)) {
-      anon_expr <- paste0(
-        "CASE WHEN k_valor < ", k, " OR l_valor < ", l,
-        " THEN '***' ELSE ", qi(var_a_anon), " END AS ", qi(var_a_anon)
-      )
-    } else {
-      anon_expr <- paste0(
-        "CASE WHEN k_valor < ", k, " OR l_valor < ", l,
-        " THEN NULL ELSE ", qi(var_a_anon), " END AS ", qi(var_a_anon)
-      )
-    }
-
-    # Rebuild sin k_valor/l_valor y con la variable ya suprimida
-    other_cols <- setdiff(get_cols(), c(var_a_anon, "k_valor", "l_valor"))
-
-    rebuild(paste0(
-      "SELECT ", paste(qi(other_cols), collapse = ", "), ", ",
-      anon_expr, " FROM datos"
-    ))
-
-    vars_anonimizadas <- c(vars_anonimizadas, var_a_anon)
-    candidatas <- setdiff(candidatas, var_a_anon)
-
-    calcular_kl(qid_evaluacion, sensitive_var, "k_valor", "l_valor")
   }
 
   if (length(vars_anonimizadas) > 0) {
     resumen$otras_vars_anonimizadas <- vars_anonimizadas
   }
 
+  # Verificación final sobre el conjunto completo de cuasi-identificadores
+  calcular_kl(qid_evaluacion, sensitive_var, "k_valor", "l_valor")
+  incumplen <- dbGetQuery(
+    con,
+    paste0(
+      "SELECT COUNT(*) AS n FROM datos WHERE k_valor < ", k,
+      " OR l_valor < ", l
+    )
+  )$n
+  if (incumplen > 0) {
+    warning(
+      "Quedan ", incumplen, " registros que no cumplen k = ", k, " o l = ", l,
+      " tras agotar las variables disponibles. Revisar antes de publicar."
+    )
+  }
+
+  # Soltar las copias del código territorial original
+  cols_orig <- intersect(paste0(geo_vars, "_orig"), get_cols())
+  if (length(cols_orig) > 0) {
+    keep <- setdiff(get_cols(), cols_orig)
+    rebuild(paste0(
+      "SELECT ", paste(qi(keep), collapse = ", "), " FROM datos"
+    ))
+  }
   # --- 8. Limpiar columnas temporales ----------------------------------------
 
   if (eliminar_temporales) {
     cols_finales <- get_cols()
     temp_patterns <- c(
       "_nivel\\d+$", "^K_.*_nivel\\d+$", "^L_.*_nivel\\d+$",
-      "_final$", "^k_valor$", "^l_valor$"
+      "_final$", "_cumple$", "^k_valor$", "^l_valor$"
     )
     vars_temp <- c()
     for (p in temp_patterns) {
