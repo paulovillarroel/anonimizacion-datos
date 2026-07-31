@@ -82,7 +82,11 @@ anonimizar_duckdb(
 )
 ```
 
-Ver `ejemplo.R` para un caso completo con datos abiertos reales del DEIS.
+`ejemplo.R` recorre el flujo completo —identificadores directos, pseudonimización, escalera territorial, verificación y descarte de lo que quedó bajo el umbral— sobre una base sintética que genera él mismo, de modo que corre sin descargar nada:
+
+```
+Rscript ejemplo.R
+```
 
 ## Parámetros
 
@@ -168,29 +172,42 @@ El ajuste que resolvería esto está documentado en [docs/propuesta-ajuste-norma
 
 ## Resultado
 
-`anonimizar()` devuelve el data frame anonimizado. `anonimizar_duckdb()` escribe el archivo de salida y devuelve el resumen de forma invisible. Ambas imprimen en consola un resumen con esta forma:
+`anonimizar()` devuelve el data frame anonimizado. `anonimizar_duckdb()` escribe el archivo de salida y devuelve el resumen de forma invisible. Ambas imprimen en consola un resumen.
+
+Esta es la salida real de `ejemplo.R`, que genera su propia base sintética de 12.580 egresos en 13 comunas y se puede reproducir con `Rscript ejemplo.R`:
 
 ```
 === RESUMEN DE ANONIMIZACIÓN ===
-Dataset original: <n> registros
-Identificadores eliminados: rut, nombre, email
+Dataset original: 12580 registros
+Identificadores eliminados: rut, nombre_paciente
 Variables pseudonimizadas (hash): id_paciente
 Variables de edad agrupadas: edad_cant
 Variables geográficas anonimizadas:
-  - cod_comuna:
-     Sin anonimización: <n> registros (<%>)
-     Nivel 2 (3 primeros dígitos): <n> registros (<%>)
-     Nivel 3 (2 primeros dígitos): <n> registros (<%>)
-     Máxima anonimización: <n> registros (<%>)
-Otras variables anonimizadas: sexo_nombre, comuna
-Parámetros utilizados: k = 3, l = 2
-Registros en dataset anonimizado: <n>
+  - cod_comuna :
+     Sin anonimización: 12260 registros (97.5%)
+     Nivel 2 (3 primeros dígitos): 269 registros (2.1%)
+     Nivel 3 (2 primeros dígitos): 51 registros (0.4%)
+     Máxima anonimización: 0 registros (0%)
+Otras variables anonimizadas: sexo_nombre, prevision, edad_cant_grupo
+Parámetros utilizados: k = 3 , l = 2
+Registros en dataset anonimizado: 12580
 ===================================
 ```
 
-Es el formato del resumen, no una corrida concreta: las cifras dependen por completo de tus datos y de los umbrales que elijas. Para ver una salida real, ejecuta `ejemplo.R`, que trabaja sobre datos abiertos del DEIS.
+Las cifras dependen por completo de tus datos y de los umbrales que elijas; lo que se mantiene es la forma del resumen.
 
-Si aparece el `warning` de que se acabaron las variables por suprimir, el resumen **no** describe una base conforme: quedan grupos bajo k o l. Ver [Limitación conocida](#limitación-conocida).
+En esta corrida aparece además el aviso de que quedaron 170 registros sin cumplir k o l. **Es el comportamiento esperado**, no un error del ejemplo: el procedimiento de la norma no garantiza por sí solo que todos los grupos publicados alcancen k, por la razón que explica [Limitación conocida](#limitación-conocida). El propio `ejemplo.R` sigue con el paso que corresponde: verificar sobre la base final y descartar los grupos que quedaron cortos.
+
+```
+Verificacion sobre el resultado:
+  grupos: 728 | K minimo: 1 | L minimo: 1 | grupos bajo el umbral: 113
+
+Tras descartar los grupos bajo el umbral:
+  registros: 12410 de 12580 (se descarta 1.35%)
+  K minimo: 3 | L minimo: 2 | grupos bajo el umbral: 0
+```
+
+El resumen dice qué se hizo, no que el resultado cumpla. **Verifica siempre sobre la base final antes de publicar**, agrupando por todos los cuasi-identificadores.
 
 ## Consideraciones
 
