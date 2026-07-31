@@ -1,0 +1,3 @@
+# Normalizar finales de línea: el repositorio se edita desde Windows y WSL.
+* text=auto eol=lf
+*.pdf binary
