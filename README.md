@@ -15,16 +15,30 @@ Cada archivo es autocontenido: puedes copiar solo el que necesites a tu proyecto
 
 ## Instalación
 
+Las dependencias se instalan con [pak](https://pak.r-lib.org):
+
 ```r
 # Para la versión en memoria
-install.packages(c("dplyr", "stringr", "readr", "janitor"))
+pak::pkg_install(c("dplyr", "stringr", "readr", "janitor"))
 
 # Para pseudonimizar (opcional, solo si usas pseudo_id_vars)
-install.packages("digest")
+pak::pkg_install("digest")
 
 # Para la versión sobre archivos
-install.packages(c("duckdb", "DBI"))
+pak::pkg_install(c("duckdb", "DBI"))
 ```
+
+O todo de una vez:
+
+```r
+pak::pkg_install(c(
+  "dplyr", "stringr", "readr", "janitor",  # versión en memoria
+  "digest",                                 # pseudonimización
+  "duckdb", "DBI"                           # versión sobre archivos
+))
+```
+
+Si aún no tienes pak, se instala una sola vez con `install.packages("pak")`.
 
 ## Uso
 
