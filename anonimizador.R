@@ -6,6 +6,11 @@ library(stringr)
 # ==============================================================================
 # Anonimización k-anonimidad + l-diversidad (implementación en memoria, dplyr)
 #
+# PROYECTO PERSONAL, NO OFICIAL. No es codigo del Ministerio de Salud de Chile
+# ni del DEIS, ni cuenta con su patrocinio o aval. Es una implementacion propia
+# basada en un documento publico. Material referencial: adaptalo a tu caso y
+# valida la salida antes de publicar nada. Sin garantias, licencia MIT.
+#
 # Sigue la metodología de la "Norma técnica de anonimización para la publicación
 # de bases de datos como datos abiertos" (DEIS, MINSAL Chile), incluida en este
 # repositorio.

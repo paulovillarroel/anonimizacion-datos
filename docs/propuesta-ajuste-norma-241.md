@@ -4,6 +4,8 @@
 **Asunto:** El K que justifica el nivel de anonimización del código de comuna no es el K que finalmente se publica
 **Documento de referencia:** *Norma técnica de anonimización para la publicación de bases de datos como datos abiertos* (N° 241), anexo con la implementación en R
 
+> **Aporte externo e independiente.** Este documento no proviene del Ministerio de Salud ni del DEIS, ni cuenta con su patrocinio o aval. Es una observación hecha a título personal por quien implementó el procedimiento de la norma en un proyecto propio, y se comparte por si resulta de utilidad para una eventual actualización del anexo. La decisión sobre su pertinencia corresponde enteramente al Departamento.
+
 ---
 
 ## Resumen

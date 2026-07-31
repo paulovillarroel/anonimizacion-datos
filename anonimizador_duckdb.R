@@ -4,6 +4,11 @@ library(DBI)
 # ==============================================================================
 # Anonimización k-anonimidad + l-diversidad, 100% en DuckDB
 #
+# PROYECTO PERSONAL, NO OFICIAL. No es codigo del Ministerio de Salud de Chile
+# ni del DEIS, ni cuenta con su patrocinio o aval. Es una implementacion propia
+# basada en un documento publico. Material referencial: adaptalo a tu caso y
+# valida la salida antes de publicar nada. Sin garantias, licencia MIT.
+#
 # Misma lógica que `anonimizar()` en anonimizador.R, pero los datos NUNCA se
 # cargan en memoria R: se leen y escriben como Parquet (o CSV) y todas las
 # transformaciones ocurren dentro de DuckDB. Pensado para datasets que no caben

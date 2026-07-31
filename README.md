@@ -1,5 +1,12 @@
 # Anonimizador de Datos
 
+> [!IMPORTANT]
+> **Proyecto personal, no oficial.** Este repositorio no es código del Ministerio de Salud de Chile ni del Departamento de Estadísticas e Información de Salud (DEIS). No está patrocinado, avalado ni respaldado por esas instituciones, ni guarda relación oficial con ellas. Es una implementación propia, hecha a título personal, basada en un documento público: la *Norma técnica de anonimización para la publicación de bases de datos como datos abiertos* (N° 241).
+>
+> **Es material referencial.** Sirve como punto de partida y como ilustración de la metodología, no como una solución lista para producción. Antes de usarlo con datos reales hay que adaptarlo al caso concreto —qué variables son cuasi-identificadoras, qué umbrales corresponden, qué se publica y qué no— y validar el resultado. Los valores por defecto son ejemplos, no recomendaciones para tu base de datos.
+>
+> **La responsabilidad es de quien publica.** Ninguna herramienta de anonimización elimina por completo el riesgo de reidentificación, y esta tiene además una [limitación conocida](#limitación-conocida) heredada del procedimiento en que se basa. Verifica siempre la salida antes de publicar. El software se entrega sin garantías, bajo licencia MIT.
+
 ## Descripción
 
 Esta herramienta implementa técnicas de k-anonimidad y l-diversidad para anonimizar conjuntos de datos, siguiendo la metodología establecida en la norma técnica de anonimización para la publicación de bases de datos como datos abiertos del Ministerio de Salud de Chile (MINSAL).
@@ -198,4 +205,4 @@ Esta implementación se basa en la *Norma técnica de anonimización para la pub
 
 ## Licencia
 
-[MIT]
+[MIT](LICENSE). El software se entrega tal cual, sin garantías de ningún tipo.
