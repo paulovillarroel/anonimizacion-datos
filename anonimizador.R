@@ -119,7 +119,10 @@ anonimizar <- function(
     pseudo_presentes <- intersect(pseudo_id_vars, names(df))
     if (length(pseudo_presentes) > 0) {
       if (!requireNamespace("digest", quietly = TRUE)) {
-        stop("La pseudonimización requiere el paquete 'digest'.")
+        stop(
+          "La pseudonimización requiere el paquete 'digest'. ",
+          "Instalar con: pak::pkg_install(\"digest\")"
+        )
       }
       if (is.null(salt)) {
         salt <- paste(sample(c(letters, LETTERS, 0:9), 16), collapse = "")
