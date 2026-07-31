@@ -161,25 +161,29 @@ El ajuste que resolvería esto está documentado en [docs/propuesta-ajuste-norma
 
 ## Resultado
 
-`anonimizar()` devuelve el data frame anonimizado. `anonimizar_duckdb()` escribe el archivo de salida y devuelve el resumen de forma invisible. Ambas imprimen en consola un resumen:
+`anonimizar()` devuelve el data frame anonimizado. `anonimizar_duckdb()` escribe el archivo de salida y devuelve el resumen de forma invisible. Ambas imprimen en consola un resumen con esta forma:
 
 ```
 === RESUMEN DE ANONIMIZACIÓN ===
-Dataset original: 58714 registros
+Dataset original: <n> registros
 Identificadores eliminados: rut, nombre, email
 Variables pseudonimizadas (hash): id_paciente
 Variables de edad agrupadas: edad_cant
 Variables geográficas anonimizadas:
   - cod_comuna:
-     Sin anonimización: 52500 registros (89.4%)
-     Nivel 2 (3 primeros dígitos): 3200 registros (5.5%)
-     Nivel 3 (2 primeros dígitos): 1800 registros (3.1%)
-     Máxima anonimización: 1214 registros (2.0%)
+     Sin anonimización: <n> registros (<%>)
+     Nivel 2 (3 primeros dígitos): <n> registros (<%>)
+     Nivel 3 (2 primeros dígitos): <n> registros (<%>)
+     Máxima anonimización: <n> registros (<%>)
 Otras variables anonimizadas: sexo_nombre, comuna
 Parámetros utilizados: k = 3, l = 2
-Registros en dataset anonimizado: 58714
+Registros en dataset anonimizado: <n>
 ===================================
 ```
+
+Es el formato del resumen, no una corrida concreta: las cifras dependen por completo de tus datos y de los umbrales que elijas. Para ver una salida real, ejecuta `ejemplo.R`, que trabaja sobre datos abiertos del DEIS.
+
+Si aparece el `warning` de que se acabaron las variables por suprimir, el resumen **no** describe una base conforme: quedan grupos bajo k o l. Ver [Limitación conocida](#limitación-conocida).
 
 ## Consideraciones
 
