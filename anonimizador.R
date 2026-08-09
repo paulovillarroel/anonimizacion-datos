@@ -49,7 +49,8 @@ anonimizar <- function(
   k = 2, # Valor de k-anonimidad
   l = 2, # Valor de l-diversidad
   edad_rangos = seq(0, 80, by = 5), # Cortes inferiores de los tramos de edad
-  salt = NULL, # Salt del hash; si es NULL se genera uno aleatorio
+  salt = NULL, # Salt del hash; si es NULL se genera uno aleatorio (ver README)
+  n_hex = 16, # Largo del seudónimo en caracteres hex (16 = 64 bits)
   eliminar_temporales = TRUE # Si se deben eliminar las columnas temporales
 ) {
   # Validación de parámetros
@@ -117,9 +118,14 @@ anonimizar <- function(
     }
   }
 
-  # 2. Pseudonimización (hash md5 truncado, con salt)
+  # 2. Pseudonimización (hash SHA-256 truncado, con salt)
   # A diferencia de id_vars, conserva la columna para poder seguir a un mismo
   # sujeto dentro del dataset sin publicar su identificador.
+  #
+  # SHA-256 y no MD5: MD5 está roto para resistencia a colisiones y es tan
+  # rápido de calcular que le facilita el trabajo a quien quiera revertir el
+  # hash probando todos los valores posibles (un RUN chileno son ~25 bits de
+  # entropía: el espacio entero se recorre en segundos).
   if (!is.null(pseudo_id_vars)) {
     pseudo_presentes <- intersect(pseudo_id_vars, names(df))
     if (length(pseudo_presentes) > 0) {
@@ -129,10 +135,26 @@ anonimizar <- function(
           "Instalar con: pak::pkg_install(\"digest\")"
         )
       }
+      if (!is.numeric(n_hex) || n_hex < 12 || n_hex > 64) {
+        stop("'n_hex' debe estar entre 12 y 64 caracteres hexadecimales.")
+      }
+      if (n_hex < 16) {
+        warning(
+          "n_hex = ", n_hex, " (", 4 * n_hex, " bits) es corto: con del orden de ",
+          "un millón de personas distintas ya aparecen colisiones, y una ",
+          "colisión fusiona a dos personas en un mismo seudónimo.",
+          call. = FALSE
+        )
+      }
       if (is.null(salt)) {
         salt <- paste(sample(c(letters, LETTERS, 0:9), 16), collapse = "")
+        message(
+          "Se generó un salt aleatorio: los seudónimos NO se van a repetir en ",
+          "una corrida posterior. Si necesitas que sean estables entre ",
+          "corridas, pasa el salt explícitamente."
+        )
       }
-      hasher <- digest::getVDigest(algo = "md5")
+      hasher <- digest::getVDigest(algo = "sha256")
 
       for (var in pseudo_presentes) {
         valores <- as.character(df[[var]])
@@ -142,13 +164,26 @@ anonimizar <- function(
           hashed[no_na] <- substr(
             hasher(paste0(salt, valores[no_na]), serialize = FALSE),
             1,
-            12
+            n_hex
           )
+          # Comprobación de colisiones: dos personas distintas con el mismo
+          # seudónimo no son un problema de privacidad, son un dato erróneo.
+          n_orig <- length(unique(valores[no_na]))
+          n_hash <- length(unique(hashed[no_na]))
+          if (n_hash < n_orig) {
+            warning(
+              "La columna '", var, "' tiene ", n_orig - n_hash,
+              " colisión(es): personas distintas quedaron con el mismo ",
+              "seudónimo. Sube 'n_hex'.",
+              call. = FALSE
+            )
+          }
         }
         df[[var]] <- hashed
       }
 
       resumen$pseudo_id_vars <- pseudo_presentes
+      resumen$pseudo_n_hex <- n_hex
     }
   }
 
@@ -405,8 +440,13 @@ imprimir_resumen <- function(resumen, k, l, n_final) {
 
   if (length(resumen$pseudo_id_vars) > 0) {
     cat(
-      "Variables pseudonimizadas (hash):",
+      "Variables pseudonimizadas (SHA-256):",
       paste(resumen$pseudo_id_vars, collapse = ", "),
+      if (!is.null(resumen$pseudo_n_hex)) {
+        paste0("(", resumen$pseudo_n_hex, " hex = ", 4 * resumen$pseudo_n_hex, " bits)")
+      } else {
+        ""
+      },
       "\n"
     )
   }

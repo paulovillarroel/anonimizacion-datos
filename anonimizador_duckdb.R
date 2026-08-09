@@ -47,7 +47,8 @@ anonimizar_duckdb <- function(
   k = 2, # Valor de k-anonimidad
   l = 2, # Valor de l-diversidad
   edad_rangos = seq(0, 80, by = 5), # Cortes inferiores de los tramos de edad
-  salt = NULL, # Salt del hash; si es NULL se genera uno aleatorio
+  salt = NULL, # Salt del hash; si es NULL se genera uno aleatorio (ver README)
+  n_hex = 16, # Largo del seudónimo en caracteres hex (16 = 64 bits)
   eliminar_temporales = TRUE # Si se deben eliminar las columnas temporales
 ) {
   if (!is.numeric(k) || k < 1 || !is.numeric(l) || l < 1) {
@@ -204,21 +205,44 @@ anonimizar_duckdb <- function(
     }
   }
 
-  # --- 2. Pseudonimización (hash md5 truncado, con salt) ---------------------
+  # --- 2. Pseudonimización (hash SHA-256 truncado, con salt) -----------------
+  # Mismo algoritmo y mismo truncado que la versión en memoria, para que las dos
+  # rutas produzcan seudónimos idénticos con el mismo salt.
 
   if (!is.null(pseudo_id_vars)) {
     pseudo_presentes <- intersect(pseudo_id_vars, get_cols())
+    n_distintos_previo <- list()
     if (length(pseudo_presentes) > 0) {
+      for (c in pseudo_presentes) {
+        n_distintos_previo[[c]] <- DBI::dbGetQuery(con, paste0(
+          "SELECT COUNT(DISTINCT ", qi(c), ") AS n FROM datos"
+        ))$n
+      }
+      if (!is.numeric(n_hex) || n_hex < 12 || n_hex > 64) {
+        stop("'n_hex' debe estar entre 12 y 64 caracteres hexadecimales.")
+      }
+      if (n_hex < 16) {
+        warning(
+          "n_hex = ", n_hex, " (", 4 * n_hex, " bits) es corto: una colisión ",
+          "fusiona a dos personas en un mismo seudónimo.",
+          call. = FALSE
+        )
+      }
       if (is.null(salt)) {
         salt <- paste(sample(c(letters, LETTERS, 0:9), 16), collapse = "")
+        message(
+          "Se generó un salt aleatorio: los seudónimos NO se van a repetir en ",
+          "una corrida posterior. Si necesitas que sean estables entre ",
+          "corridas, pasa el salt explícitamente."
+        )
       }
 
       select_parts <- sapply(get_cols(), function(c) {
         if (c %in% pseudo_presentes) {
           paste0(
             "CASE WHEN ", qi(c), " IS NULL THEN NULL ",
-            "ELSE SUBSTR(md5(", qs(salt), " || CAST(", qi(c),
-            " AS VARCHAR)), 1, 12) END AS ", qi(c)
+            "ELSE SUBSTR(sha256(", qs(salt), " || CAST(", qi(c),
+            " AS VARCHAR)), 1, ", as.integer(n_hex), ") END AS ", qi(c)
           )
         } else {
           qi(c)
@@ -228,7 +252,24 @@ anonimizar_duckdb <- function(
       rebuild(paste0(
         "SELECT ", paste(select_parts, collapse = ", "), " FROM datos"
       ))
+
+      # Colisiones: personas distintas con el mismo seudónimo son un dato malo,
+      # no solo un riesgo. Se comprueba sobre la tabla ya reconstruida.
+      for (c in pseudo_presentes) {
+        n <- DBI::dbGetQuery(con, paste0(
+          "SELECT COUNT(DISTINCT ", qi(c), ") AS n FROM datos"
+        ))$n
+        if (!is.na(n) && n < n_distintos_previo[[c]]) {
+          warning(
+            "La columna '", c, "' tiene ", n_distintos_previo[[c]] - n,
+            " colisión(es) tras truncar a ", n_hex, " caracteres. Sube 'n_hex'.",
+            call. = FALSE
+          )
+        }
+      }
+
       resumen$pseudo_id_vars <- pseudo_presentes
+      resumen$pseudo_n_hex <- n_hex
     }
   }
 
@@ -557,8 +598,13 @@ imprimir_resumen_duckdb <- function(resumen, k, l, n_final) {
 
   if (length(resumen$pseudo_id_vars) > 0) {
     cat(
-      "Variables pseudonimizadas (hash):",
+      "Variables pseudonimizadas (SHA-256):",
       paste(resumen$pseudo_id_vars, collapse = ", "),
+      if (!is.null(resumen$pseudo_n_hex)) {
+        paste0("(", resumen$pseudo_n_hex, " hex = ", 4 * resumen$pseudo_n_hex, " bits)")
+      } else {
+        ""
+      },
       "\n"
     )
   }
