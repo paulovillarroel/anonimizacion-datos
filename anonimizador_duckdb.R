@@ -598,8 +598,13 @@ imprimir_resumen_duckdb <- function(resumen, k, l, n_final) {
 
   if (length(resumen$pseudo_id_vars) > 0) {
     cat(
-      "Variables pseudonimizadas (hash):",
+      "Variables pseudonimizadas (SHA-256):",
       paste(resumen$pseudo_id_vars, collapse = ", "),
+      if (!is.null(resumen$pseudo_n_hex)) {
+        paste0("(", resumen$pseudo_n_hex, " hex = ", 4 * resumen$pseudo_n_hex, " bits)")
+      } else {
+        ""
+      },
       "\n"
     )
   }
