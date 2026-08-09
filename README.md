@@ -94,14 +94,15 @@ Rscript ejemplo.R
 |---|---|---|
 | `data` / `archivo_entrada` + `archivo_salida` | — | Data frame, o rutas de entrada y salida en la versión DuckDB |
 | `id_vars` | `NULL` | Identificadores directos. Se **eliminan** del resultado |
-| `pseudo_id_vars` | `NULL` | Identificadores a reemplazar por un hash md5 con salt, truncado a 12 caracteres |
+| `pseudo_id_vars` | `NULL` | Identificadores a reemplazar por un hash SHA-256 con salt, truncado |
 | `quasi_id_vars` | — | Variables cuasi-identificadoras que podrían permitir re-identificación |
 | `geo_vars` | `NULL` | Códigos territoriales jerárquicos, anonimizados por niveles progresivos |
 | `sensitive_var` | — | Variable sensible cuya confidencialidad se quiere proteger |
 | `k` | `2` | Valor mínimo para k-anonimidad |
 | `l` | `2` | Valor mínimo para l-diversidad |
 | `edad_rangos` | `seq(0, 80, by = 5)` | Cortes inferiores de los tramos de edad. El último queda abierto |
-| `salt` | `NULL` | Salt del hash. Si es `NULL` se genera uno aleatorio por ejecución |
+| `salt` | `NULL` | Salt del hash. Si es `NULL` se genera uno aleatorio por ejecución (y se avisa) |
+| `n_hex` | `16` | Largo del seudónimo en caracteres hexadecimales. 16 = 64 bits |
 | `eliminar_temporales` | `TRUE` | Si se eliminan las columnas de trabajo (`K_*`, `L_*`, `*_nivel*`, `k_valor`, `l_valor`) |
 
 k y l se evalúan siempre sobre **todas** las cuasi-identificadoras, incluidas las de `geo_vars`.
@@ -138,12 +139,26 @@ La norma técnica no prescribe tramos concretos: habla de generalización a "ran
 
 El salt es lo que hace irreversible el hash. Si no lo pasas, se genera uno aleatorio distinto en cada ejecución, así que dos corridas —o dos subconjuntos procesados por separado— **no son cruzables entre sí**. Si necesitas que sí lo sean, fija el salt explícitamente y **guárdalo en secreto**: nunca en el repositorio, idealmente en una variable de entorno.
 
-Esto es pseudonimización, no anonimización: con el salt en mano el mapeo se puede reconstruir por diccionario.
+Esto es pseudonimización, no anonimización: con el salt en mano el mapeo se puede reconstruir por diccionario. Y reconstruirlo es barato — un RUN chileno tiene del orden de 25 bits de entropía, así que el espacio completo se recorre en segundos. El salt protege mientras se mantenga en secreto; no convierte el hash en irreversible.
+
+### Sobre el largo del seudónimo (`n_hex`)
+
+Truncar el hash acorta la columna, pero cada carácter que sacas acerca el momento en que **dos personas distintas reciben el mismo seudónimo**. Eso no es solo un problema de privacidad: es un dato erróneo, porque fusiona dos personas en una.
+
+La probabilidad de que haya al menos una colisión con `n` personas distintas y `m` seudónimos posibles es aproximadamente `1 - exp(-n² / (2m))`:
+
+| Largo | Bits | 1 millón de personas | 18 millones |
+|---|---|---|---|
+| 12 hex | 48 | 0,2 % | **44 %** |
+| 16 hex | 64 | 0,000003 % | 0,0009 % |
+| 32 hex | 128 | ~0 | ~0 |
+
+Por eso el valor por omisión es **16**, y con menos de 16 la función avisa. Además comprueba las colisiones sobre tus propios datos y avisa si alguna ocurrió.
 
 ## Proceso de Anonimización
 
 1. **Eliminación de identificadores directos**: remueve las variables de `id_vars` (RUT, nombre, dirección, etc.).
-2. **Pseudonimización**: reemplaza las variables de `pseudo_id_vars` por un hash md5 con salt.
+2. **Pseudonimización**: reemplaza las variables de `pseudo_id_vars` por un hash SHA-256 con salt, truncado a `n_hex` caracteres.
 3. **Agrupación de variables de edad**: toda cuasi-identificadora numérica cuyo nombre contenga "edad" se convierte en tramos según `edad_rangos`.
 4. **Degradación progresiva**, en el orden que fija la norma:
    1. Para cada variable de `geo_vars`, se aplica el nivel menos restrictivo que cumpla k y l.

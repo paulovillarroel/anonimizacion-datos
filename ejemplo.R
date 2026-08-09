@@ -92,7 +92,10 @@ egresos_anonimizados <- anonimizar(
   sensitive_var = "diagnostico",
   k = 3,
   l = 2,
-  salt = "ejemplo-reproducible" # en produccion, nunca en el codigo
+  # El salt fijo hace que el ejemplo sea reproducible. En produccion NUNCA en el
+  # codigo: leelo del entorno, p. ej. salt = Sys.getenv("ANON_SALT"), y no lo
+  # subas al repositorio.
+  salt = "ejemplo-reproducible"
 )
 
 cat("\nPrimeras filas del resultado:\n")
@@ -169,7 +172,7 @@ if (requireNamespace("duckdb", quietly = TRUE)) {
     sensitive_var = "diagnostico",
     k = 3,
     l = 2,
-    salt = "ejemplo-reproducible"
+    salt = "ejemplo-reproducible" # ver nota de arriba
   )
 
   unlink(c("egresos.parquet", "egresos_anonimizados.parquet"))
